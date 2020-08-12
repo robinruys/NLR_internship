@@ -1,0 +1,65 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="FBCalculateXYZ" Id="{0690171c-84aa-4aec-8c59-81dd7570b324}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FBCalculateXYZ
+VAR_INPUT
+	X_coordinate			: LREAL;
+	Y_coordinate			: LREAL;
+	Graden_orientatie		: LREAL;
+	Z_coordinate			: LREAL;
+	displacement_mm			: LREAL;
+END_VAR
+VAR_OUTPUT
+	Angle_1					: LREAL;
+	Angle_2					: LREAL;
+	Angle_3					: LREAL;
+	Angle_4					: LREAL;
+END_VAR
+VAR
+	orientatie				: LREAL;	
+	JointAngle_1			: LREAL;
+	JointAngle_2			: LREAL;
+	JointAngle_3			: LREAL;
+	JointAngle_4			: LREAL;
+	DisplacementAngle		: LREAL;
+	cons_A					: LREAL;
+	cons_B					: LREAL;
+	cons_C					: LREAL;
+	Lenght_1				: LREAL:=142;
+	Lenght_2				: LREAL:=350;
+	Lenght_3				: LREAL:=270;
+	Lenght_4				: LREAL:=165;
+	A						: LREAL;
+	B						: LREAL;
+	C						: LREAL;
+	ABC_R					: LREAL;
+END_VAR
+			]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[			orientatie := Graden_orientatie / 180 *  PI;
+			Angle_1	:= atan2(Y_coordinate,X_coordinate);	//if you wan't to see the equilation explained go to my report
+			cons_A 	:= X_coordinate - (Lenght_4*COS(Angle_1)* COS(orientatie)); 	// This is the full kinematic equilation
+			cons_B 	:= Y_coordinate - (Lenght_4*SIN(Angle_1)*COS(orientatie)); 
+			cons_C 	:= Z_coordinate - Lenght_1 - (Lenght_4 * SIN(orientatie));
+			Angle_3	:= ACOS((EXPT(cons_A,2)+EXPT(cons_B,2)+EXPT(cons_C,2)-EXPT(Lenght_2,2)-EXPT(Lenght_3,2))/
+						(2*Lenght_2*Lenght_3));
+			A := (Lenght_3*(SIN(Angle_3)));
+			B := (Lenght_2+(Lenght_3*COS(Angle_3)));
+			C := (Z_coordinate-Lenght_1-Lenght_4*SIN(orientatie));
+			ABC_R := SQRT((EXPT(A,2)+EXPT(B,2)));	
+			Angle_2 := atan2(C, + SQRT(EXPT(ABC_R,2) - EXPT(C,2)))-atan2(A,B);
+			Angle_4 := orientatie - Angle_2 - Angle_3;
+			JointAngle_1 := 180*(Angle_1)/PI;	
+			JointAngle_2 := -((180*(Angle_2)/PI)-90);	
+			JointAngle_3 := 180*(Angle_3)/PI;	
+			jointAngle_4 := 180*(Angle_4)/PI;
+			
+			DisplacementAngle := -(displacement_mm / 17 * 720);]]></ST>
+    </Implementation>
+    <LineIds Name="FBCalculateXYZ">
+      <LineId Id="26" Count="15" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="76" Count="1" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

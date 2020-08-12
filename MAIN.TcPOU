@@ -1,0 +1,695 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4022.18">
+  <POU Name="MAIN" Id="{9fc084ab-1ce3-4218-82ed-a118c3b6b3e4}" SpecialFunc="None">
+    <Declaration><![CDATA[ PROGRAM MAIN
+VAR
+	AxisA 					: AXIS_REF; 							// axis for linear module
+	AxisACS 				: ARRAY [1..5] OF AXIS_REF; 			// axes of the robot arm
+	fbAxes					: ARRAY [1..5] OF FB_AxisWithRefSwitch; // ini set switches for calibration of the arm.
+	UpperRefswitch AT %I*	: BOOL; // limit switch for AxisA
+	LowerRefswitch AT %I*	: BOOL; // limit switch for AxisA
+	idx 					: INT;
+	////////////////////////////////////////////////////////////////////////////////////////
+	btActivator 			: BOOL := FALSE;	// activates configuration
+	btHoming 				: BOOL := FALSE;	// starts homing/calibration process.
+	btMoveStartPos 			: BOOL := FALSE; 	// movement to start position
+	btMoveSafePos 			: BOOL := FALSE;	// movement to safe position in order to displace the entire arm
+	////////////////////////////////////////////////////////////////////////////////////////
+	McMoveAbs 				: ARRAY [1..30] OF MC_MoveAbsolute; // absolute movement, takes 0 position as reference
+	McMoveRel 				: ARRAY [1..9] OF MC_MoveRelative; 	// relative movement compared to its current position
+	McPower 				: ARRAY [1..15] OF MC_Power;		// sets power active to the axis
+	McReset 				: ARRAY [1..15] OF MC_Reset;		// resets the axis
+	McJogging 				: ARRAY [1..15] OF MC_Jog;			// enables manual jogging of axis
+	McVelocity 				: MC_MoveVelocity;					// determines velocity of movement
+	McStop 					: ARRAY [1..12] OF MC_Stop;			// stops the axis 
+	McHome 					: ARRAY [1..12] OF MC_Home;			// starts calibration process
+	////////////////////////////////////////////////////////////////////////////////////////
+	fbCalculateXYZ			: FBCalculateXYZ;
+	X_coordinate			: LREAL;
+	Y_coordinate			: LREAL;
+	Z_coordinate			: LREAL;
+	Graden_orientatie		: LREAL;
+	displacement_mm			: LREAL;
+	CalculatedJ1			: LREAL;
+	CalculatedJ2			: LREAL;
+	CalculatedJ3			: LREAL;
+	CalculatedJ4			: LREAL;
+	////////////////////////////////////////////////////////////////////////////////////////
+	PosScan					: BOOL;
+	LEscan					: ARRAY [1..9] OF LREAL := [450, 280, 170, 550, 340, 150, 300, -550, 100]; //Z,Y,phi [610, 340, 150, 450, 340, 150, 370, 450, 150]
+	Zc : INT := 0;
+	Xc : INT := 1; 
+	Yc : INT := 2;
+	Hc : INT := 3;
+	
+	//Delay : TON;
+	//Count : INT := 0;
+	////////////////////////////////////////////////////////////////////////////////////////
+	JOG_Value_X_axis		: DINT := 10;
+	JOG_Value_Y_axis		: DINT := 10;
+	JOG_Value_Z_axis		: DINT := 10;
+	JOG_Value_phi_axis		: DINT := 5;
+	////////////////////////////////////////////////////////////////////////////////////////
+	sStateDesc 				: STRING;						// used to describe current state of state machine
+	sNoodstop 				: STRING;
+	iState 					: DINT;							// number of the state
+	MotorJog				: DINT;
+	bError 					: BOOL;							//
+	btResetfull 			: BOOL := FALSE;				// full reset of program
+	btReturn 				: BOOL := FALSE;				// return to start of program
+	BtState					: INT;
+	sJogDesk 				: STRING;						// used to describe current state of JogMotor
+	////////////////////////////////////////////////////////////////////////////////////////
+
+	
+	
+	
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[	(*
+	
+	Project: Leading edge scanner
+	2020 Copyright (c) NLR. All rights reserved.
+	Author: Robin Ruijs
+	
+	Contact
+	Email: 	Robin.ruijs@NLR.nl / Robinruijs1@gmail.com
+	Tel:	+316 28369059
+	
+	Contributor:
+	Timo Wassenaar
+	
+	
+	See my final raport for more infomation about the kinematics and develop choices.
+	U:\MRO\maintenanceTechnology etc......!!!!!
+	For more information about TwinCAT or the programming language see "squizybrained" on youtube 
+	
+	Good luck! And don't hasetate to contact me with any questions.
+	
+	*) 
+
+// Stepper calculation tool squizybrained encoder
+
+AxisA.ReadStatus();
+AxisACS[1].ReadStatus();
+AxisACS[2].ReadStatus();
+AxisACS[3].ReadStatus();
+AxisACS[4].ReadStatus();
+
+McPower[5](Axis:=AxisA,		 Enable:=TRUE, Enable_Positive:=TRUE, Enable_Negative:=TRUE, Override:= 100);
+McPower[1](Axis:=AxisACS[1], Enable:=TRUE, Enable_Positive:=TRUE, Enable_Negative:=TRUE, Override:= 100);
+McPower[2](Axis:=AxisACS[2], Enable:=TRUE, Enable_Positive:=TRUE, Enable_Negative:=TRUE, Override:= 100);
+McPower[3](Axis:=AxisACS[3], Enable:=TRUE, Enable_Positive:=TRUE, Enable_Negative:=TRUE, Override:= 100);
+McPower[4](Axis:=AxisACS[4], Enable:=TRUE, Enable_Positive:=TRUE, Enable_Negative:=TRUE, Override:= 100);
+
+McJogging[5](Axis:=AxisA);
+McJogging[1](Axis:=AxisACS[1]);
+McJogging[2](Axis:=AxisACS[2]);
+McJogging[3](Axis:=AxisACS[3]);
+McJogging[4](Axis:=AxisACS[4]);
+
+
+McReset[5](Axis:=AxisA);
+McReset[1](Axis:=AxisACS[1]);
+McReset[2](Axis:=AxisACS[2]);
+McReset[3](Axis:=AxisACS[3]);
+McReset[4](Axis:=AxisACS[4]);
+
+
+McStop[1](Axis:=AxisACS[1], Deceleration:=1000, Jerk:=5000);
+McStop[2](Axis:=AxisACS[2], Deceleration:=1000, Jerk:=5000);
+McStop[3](Axis:=AxisACS[3], Deceleration:=1000, Jerk:=5000);
+McStop[4](Axis:=AxisACS[4], Deceleration:=1000, Jerk:=5000);
+McStop[5](Axis:=AxisA,		Deceleration:=1000, Jerk:=5000);
+
+
+McHome[1](Axis:=AxisACS[1], bCalibrationCam:=NOT fbAxes[1].HomingSensor);
+McHome[2](Axis:=AxisACS[2], bCalibrationCam:=NOT fbAxes[2].HomingSensor);
+McHome[3](Axis:=AxisACS[3], bCalibrationCam:=NOT fbAxes[3].HomingSensor);
+McHome[4](Axis:=AxisACS[4], bCalibrationCam:=NOT fbAxes[4].HomingSensor);
+//McHome[5](Axis:=AxisA,		bCalibrationCam:=NOT bRefSwitch);
+
+CalculatedJ1 := FBCalculateXYZ.JointAngle_1;
+CalculatedJ2 := FBCalculateXYZ.JointAngle_2;
+CalculatedJ3 := FBCalculateXYZ.JointAngle_3;
+CalculatedJ4 := FBCalculateXYZ.JointAngle_4;
+
+
+// Safety prociture 
+IF UpperRefswitch = FALSE OR LowerRefswitch = FALSE THEN 
+	iState :=800;
+	sStateDesc := '!ERROR Limit switch detected!';
+END_IF
+
+CASE iState OF
+
+	0: // Initial
+		sStateDesc := '0: Waiting for Activation '; 
+		
+	
+	5: // AxisA: Start Drive reset
+		sStateDesc := '5: Axis calibration.';
+		
+		McReset[5](Axis:=AxisA,Execute:=TRUE);
+		McReset[1](Axis:=AxisACS[1],Execute:=TRUE);
+		McReset[2](Axis:=AxisACS[2],Execute:=TRUE);
+		McReset[3](Axis:=AxisACS[3],Execute:=TRUE);
+		McReset[13](Axis:=AxisACS[4],Execute:=TRUE);
+		
+		IF McReset[5].Done AND McReset[1].Done AND  McReset[2].Done AND McReset[3].Done AND McReset[13].Done  THEN
+			iState := 6;
+		ELSIF McReset[5].Error AND McReset[1].Error AND McReset[2].Error AND McReset[3].Error AND McReset[13].Error THEN
+			iState := 999;
+		END_IF	
+			
+	6: 	// AxisA wait for drive reset
+		sStateDesc := '6: AxisA - Wait for drive reset.'; 
+		
+		(*McHome[5](Axis:=AxisA,Execute:=FALSE);*)
+		McHome[1](Axis:=AxisACS[1],Execute:=FALSE);	
+		McHome[2](Axis:=AxisACS[2],Execute:=FALSE);
+		McHome[3](Axis:=AxisACS[3],Execute:=FALSE);
+		McHome[10](Axis:=AxisACS[4],Execute:=FALSE);
+		
+		IF (*McPower[5].Status AND*) McPower[1].Status AND McPower[2].Status AND McPower[3].Status AND McPower[4].Status AND  btHoming THEN
+			iState := 7;
+		END_IF
+		
+	7: //AxisA start homing process
+		sStateDesc := '7: AxisA - Start homing process.'; 
+		
+		//McHome[5](Axis:=AxisA,bCalibrationCam:=NOT UpperRefswitch,Execute:=TRUE);
+		McHome[2](Axis:=AxisACS[2],bCalibrationCam:=NOT fbAxes[2].HomingSensor,Execute:=TRUE);
+		McHome[3](Axis:=AxisACS[3],bCalibrationCam:=NOT fbAxes[3].HomingSensor,Execute:=TRUE);
+		McHome[4](Axis:=AxisACS[4],bCalibrationCam:=NOT fbAxes[4].HomingSensor,Execute:=TRUE);
+		McHome[1](Axis:=AxisACS[1],bCalibrationCam:=NOT fbAxes[1].HomingSensor,Execute:=TRUE);
+		IF (*McHome[5].Busy AND*) McHome[1].Busy AND  McHome[2].Busy AND  McHome[3].Busy AND  McHome[4].Busy THEN
+			iState := 8;
+		END_IF			
+		
+	8: // AxisA homing running
+		sStateDesc := '8: AxisA - Homing running.'; 
+		
+		IF  (*McHome[5].Done AND *)McHome[1].Done AND McHome[2].Done AND  McHome[3].Done AND  McHome[4].Done THEN
+			//McHome[5](Axis:=AxisA,Execute:=FALSE);
+			McHome[1](Axis:=AxisACS[1],Execute:=FALSE);	
+			McHome[2](Axis:=AxisACS[2],Execute:=FALSE);
+			McHome[3](Axis:=AxisACS[3],Execute:=FALSE);
+			McHome[4](Axis:=AxisACS[4],Execute:=FALSE);	
+			iState := 10;
+		ELSIF (*McHome[5].Error OR *)McHome[1].Error OR  McHome[2].Error OR  McHome[3].Error OR  McHome[4].Error THEN
+			//McHome[5](Axis:=AxisA,Execute:=FALSE);
+			McHome[1](Axis:=AxisACS[1],Execute:=FALSE);	
+			McHome[2](Axis:=AxisACS[2],Execute:=FALSE);
+			McHome[3](Axis:=AxisACS[3],Execute:=FALSE);
+			McHome[4](Axis:=AxisACS[4],Execute:=FALSE);	
+			iState := 10; // Dit was 905 error code maar as 1 homed niet 
+		END_IF	
+		
+			
+	10: 
+		sStateDesc := '10: Robot ready to move!';
+		
+	11: 
+		sStateDesc := '11: Jog mode';						// select with button JOGMODE HMI
+//je kan het best de handmatig rotatie gebruiken daar staan ook encoder values in. Ik heb dit op het  begin gemaakt in de veronderstelling dat het handig zou zijn. 
+// De handmatige rotatie vind je in de solution exploder -> NS-Task 1SVB -> Axes -> (b.v.) 'Dubbelklik' Axis 1 -> online
+		
+		CASE MotorJog OF									// Select the motors to JOG on HMI
+			1: sJogDesk := 'Joint 1 CCW';					// JOG Forward
+			McJogging[1](Axis:=AxisACS[1],JogForward:=TRUE);
+			2: sJogDesk := 'Joint 2 CCW';
+			McJogging[2](Axis:=AxisACS[2],JogForward:=TRUE);
+			3: sJogDesk := 'Joint 3 CCW';
+			McJogging[3](Axis:=AxisACS[3],JogForward:=TRUE);
+			4: sJogDesk := 'Joint 4 CCW';
+			McJogging[4](Axis:=AxisACS[4],JogForward:=TRUE); 
+			5: sJogDesk := 'Joint 1 CW';
+			McJogging[1](Axis:=AxisACS[1],JogBackwards:=TRUE);
+			6: sJogDesk := 'Joint 2 CW';
+			McJogging[2](Axis:=AxisACS[2],JogBackwards:=TRUE);
+			7: sJogDesk := 'Joint 3 CW';
+			McJogging[3](Axis:=AxisACS[3],JogBackwards:=TRUE);
+			8: sJogDesk := 'Joint 4 CW';
+			McJogging[4](Axis:=AxisACS[4],JogBackwards:=TRUE); 
+			100: sJogDesk := 'Select joint';
+			McJogging[1](Axis:=AxisACS[1],JogForward:=FALSE);
+			McJogging[2](Axis:=AxisACS[2],JogForward:=FALSE);
+			McJogging[3](Axis:=AxisACS[3],JogForward:=FALSE);
+			McJogging[4](Axis:=AxisACS[4],JogForward:=FALSE);
+			McJogging[1](Axis:=AxisACS[1],JogBackwards:=FALSE);
+			McJogging[2](Axis:=AxisACS[2],JogBackwards:=FALSE);
+			McJogging[3](Axis:=AxisACS[3],JogBackwards:=FALSE);
+			McJogging[4](Axis:=AxisACS[4],JogBackwards:=FALSE);
+		END_CASE
+		
+		
+	12:		sStateDesc := '12: Calculate pos!';
+			fbCalculateXYZ(displacement_mm:=displacement_mm , X_coordinate:=X_coordinate,Y_coordinate:=Y_coordinate , Z_coordinate:=Z_coordinate, Graden_orientatie:=Graden_orientatie);
+			iState := 13; // Berekent de postie in een functie. De input komt uit de User interface
+			
+	13: sStateDesc := '13: Moving!';  // bewegen naar de gegeven hoeken in state 12
+		McMoveAbs[3](Axis:=AxisA,
+					Position := FBCalculateXYZ.DisplacementAngle,
+					Velocity := 3000,
+					Acceleration := 453,
+					Deceleration := 453,
+					Jerk := 268.247,
+					Execute := TRUE); 
+		McMoveAbs[4](Axis:=AxisACS[1],
+					Position := FBCalculateXYZ.JointAngle_1,
+					Velocity := 20,
+					Acceleration := 67.5,
+					Deceleration := 67.5,
+					Jerk := 75.9375,
+					Execute := TRUE); 
+		McMoveAbs[5](Axis:=AxisACS[2],
+					Position := FBCalculateXYZ.JointAngle_2,
+					Velocity := 25,
+					Acceleration := 17,
+					Deceleration := 17,
+					Jerk := 13,
+					Execute := TRUE); 
+		McMoveAbs[6](Axis:=AxisACS[3],
+					Position := FBCalculateXYZ.JointAngle_3,
+					Velocity := 25,
+					Acceleration := 100,
+					Deceleration := 100,
+					Jerk := 500,
+					Execute := TRUE); 
+		McMoveAbs[7](Axis:=AxisACS[4],
+					Position := FBCalculateXYZ.JointAngle_4,
+					Velocity := 20,
+					Acceleration := 250,
+					Deceleration := 250,
+					Jerk := 2000,
+					Execute := TRUE); 
+		IF McMoveAbs[3].Done AND McMoveAbs[4].Done AND McMoveAbs[5].Done AND McMoveAbs[6].Done AND McMoveAbs[7].Done AND NOT 
+			McMoveAbs[3].Error OR McMoveAbs[4].Error OR McMoveAbs[5].Error OR McMoveAbs[6].Error OR McMoveAbs[7].Error THEN
+				McMoveAbs[3](Axis:=AxisACS[1],Execute:=FALSE);
+				McMoveAbs[4](Axis:=AxisACS[1],Execute:=FALSE);
+				McMoveAbs[5](Axis:=AxisACS[2],Execute:=FALSE);
+				McMoveAbs[6](Axis:=AxisACS[3],Execute:=FALSE);
+				McMoveAbs[7](Axis:=AxisACS[4],Execute:=FALSE);
+				iState := 15; // dit was 10
+		END_IF
+		
+	14: sStateDesc := 'Start leading edge scan'; // Dit was voor de DEMO. Ik zou deze niet meer gebruikien.
+					McMoveAbs[3](Axis:=AxisA,
+					Position := -60000,
+					Velocity := 3000,
+					Acceleration := 453,
+					Deceleration := 453,
+					Jerk := 268.247,
+					Execute := TRUE); 
+		IF McMoveAbs[3].Done  AND NOT 
+			McMoveAbs[3].Error  THEN
+			McMoveAbs[3](Axis:=AxisA,Execute:=FALSE);
+				McMoveAbs[4](Axis:=AxisACS[1],Execute:=FALSE);
+				McMoveAbs[5](Axis:=AxisACS[2],Execute:=FALSE);
+				McMoveAbs[6](Axis:=AxisACS[3],Execute:=FALSE);
+				McMoveAbs[7](Axis:=AxisACS[4],Execute:=FALSE);
+					McMoveAbs[3](Axis:=AxisA,
+					Position := -42500,
+					Velocity := 3000,
+					Acceleration := 453,
+					Deceleration := 453,
+					Jerk := 268.247,
+					Execute := TRUE); 
+				McMoveAbs[4](Axis:=AxisACS[1],Execute:=FALSE);
+				McMoveAbs[5](Axis:=AxisACS[2],Execute:=FALSE);
+				McMoveAbs[6](Axis:=AxisACS[3],Execute:=FALSE);
+				McMoveAbs[7](Axis:=AxisACS[4],Execute:=FALSE);
+					McMoveAbs[4](Axis:=AxisACS[1],
+					Position := -90,
+					Velocity := 20,
+					Acceleration := 67.5,
+					Deceleration := 67.5,
+					Jerk := 75.9375,
+					Execute := TRUE); 
+					iState := 15;
+					END_IF
+
+		
+	15: 	sStateDesc := 'Leading edge scan';   // Hiermee kan er 3 verschillende coordinaten 1 voor 1 gepostioneerd worden. waarna er een verschuiving op de Z as plaatsvind.
+				IF PosScan = TRUE THEN
+				displacement_mm 	:= Zc;
+				Z_coordinate    	:= LEscan[Xc];
+				Y_coordinate		:= LEscan[Yc];
+				Graden_orientatie	:= LEscan[Hc];
+				Xc := Xc + 3; Yc := YC + 3; Hc := Hc + 3;
+				iState := 12;
+				END_IF
+				//PosScan := FALSE;
+				IF Xc = 10 THEN
+				Xc := 1; Yc := 2; Hc := 3;
+				Zc := Zc + 500;
+				END_IF
+				IF McMoveAbs[4].Done AND McMoveAbs[5].Done AND McMoveAbs[6].Done AND McMoveAbs[7].Done AND NOT 
+				McMoveAbs[3].Error OR McMoveAbs[4].Error OR McMoveAbs[5].Error OR McMoveAbs[6].Error OR McMoveAbs[7].Error THEN
+				PosScan := TRUE;
+				END_IF
+			//iState := 10;
+			
+	 16: 	sStateDesc := 'Move To bottom'; // Beweegd naar het midden en zal naar de onderkant bewegen
+		McMoveAbs[3](Axis:=AxisA,
+					Position := -40000,
+					Velocity := 1500,
+					Acceleration := 453,
+					Deceleration := 453,
+					Jerk := 268.247,
+					Execute := TRUE); 
+		McMoveAbs[5](Axis:=AxisACS[2],
+					Position := 66,
+					Velocity := 25,
+					Acceleration := 17,
+					Deceleration := 17,
+					Jerk := 13,
+					Execute := TRUE); 
+		McMoveAbs[6](Axis:=AxisACS[3],
+					Position := 102,
+					Velocity := 25,
+					Acceleration := 100,
+					Deceleration := 100,
+					Jerk := 500,
+					Execute := TRUE); 
+		McMoveAbs[7](Axis:=AxisACS[4],
+					Position := 54,
+					Velocity := 20,
+					Acceleration := 250,
+					Deceleration := 250,
+					Jerk := 2000,
+					Execute := TRUE); 
+		IF McMoveAbs[3].Done AND  McMoveAbs[5].Done AND McMoveAbs[6].Done AND McMoveAbs[7].Done AND NOT 
+			McMoveAbs[3].Error OR  McMoveAbs[5].Error OR McMoveAbs[6].Error OR McMoveAbs[7].Error THEN
+				McMoveAbs[3](Axis:=AxisACS[1],Execute:=FALSE);
+				McMoveAbs[5](Axis:=AxisACS[2],Execute:=FALSE);
+				McMoveAbs[6](Axis:=AxisACS[3],Execute:=FALSE);
+				McMoveAbs[7](Axis:=AxisACS[4],Execute:=FALSE);
+				McMoveAbs[4](Axis:=AxisACS[1],
+					Position := -90,
+					Velocity := 20,
+					Acceleration := 67.5,
+					Deceleration := 67.5,
+					Jerk := 75.9375,
+					Execute := TRUE); 
+				END_IF
+			IF McMoveAbs[4].Done AND NOT McMoveAbs[4].Error THEN
+			McMoveAbs[4](Axis:=AxisACS[2],Execute:=FALSE);
+			iState := 10;
+			END_IF
+			
+	800: 	sStateDesc := 'an error has occured, please restart the system';
+			//McStop[0].Execute := TRUE;
+			McStop[1].Execute := TRUE;
+			McStop[2].Execute := TRUE;
+			McStop[3].Execute := TRUE;
+			McStop[4].Execute := TRUE;
+			McStop[5].Execute := TRUE;
+	//fbEStopNCI(sNciToPlc:=in_stNciToPlc,bExecute:=TRUE,fDec:=800,fJerk:=20000);
+	
+	995: // Stop motor	
+		sStateDesc := '900, Stop Motor.';
+		
+		McStop[1](Axis:=AxisA,Execute:=TRUE);
+		IF btActivator THEN
+			McStop[1](Axis:=AxisA, Execute:=FALSE);
+			iState := 40;
+		END_IF
+		
+	901: // Error 1
+	
+	sStateDesc := 'Error 901';
+	 	
+	McHome[1](Axis:=AxisACS[1],Execute:=FALSE);
+	McReset[1](Axis:=AxisACS[1],Execute:=TRUE);
+	IF btReturn THEN
+		iState := 10;
+	END_IF
+	
+	902: // Error 2
+	
+	sStateDesc := 'Error 902';
+
+	McHome[2](Axis:=AxisACS[2],Execute:=FALSE);
+	McReset[2](Axis:=AxisACS[2],Execute:=TRUE);
+	IF btReturn THEN
+		iState := 20;
+	END_IF
+	
+	903: // Error 3
+	
+	sStateDesc := 'Error 903';
+
+	McHome[3](Axis:=AxisACS[3],Execute:=FALSE);
+	McReset[3](Axis:=AxisACS[3],Execute:=TRUE);
+	IF btReturn THEN
+		iState := 30;
+	END_IF
+	
+	904: // Error 4
+	
+	sStateDesc := 'Error 904';
+
+	McHome[4](Axis:=AxisACS[5],Execute:=FALSE);
+	McReset[13](Axis:=AxisACS[5],Execute:=TRUE);	
+	IF btReturn THEN
+		iState := 40;
+	END_IF
+	
+	905: // Error 5
+	
+	sStateDesc := 'Error 905';
+	
+	McHome[5](Axis:=AxisA,Execute:=FALSE);
+	McReset[5](Axis:=AxisA,Execute:=TRUE);	
+	IF btReturn THEN
+		iState := 5;
+	END_IF
+	
+	920: // error kinematics
+	sStateDesc := 'Error 920: kinematics failure';
+		IF btReturn THEN
+			iState := 100;
+			btReturn := FALSE;
+		END_IF
+	
+	930: // nc group error
+	sStateDesc := 'Error 930: nc group error';
+		IF btReturn THEN
+			iState := 100;
+			btReturn := FALSE;
+		END_IF	
+		
+	960: // load file error
+	sStateDesc := 'Error 960: file load error';	
+		IF btReturn THEN
+			iState := 260;
+			btReturn := FALSE;
+		END_IF	
+		
+	999: //ERROR HANDLING TO DO!!
+		sStateDesc := '999, Error.';
+		IF btReturn THEN
+			iState := 0;
+			btReturn := FALSE;
+			
+		END_IF
+ELSE
+	sStateDesc := 'Invalid State.';		
+	
+	END_CASE]]></ST>
+    </Implementation>
+    <Action Name="A_PrepCircMovements" Id="{91e8b9e5-509d-4dc1-9254-188c1459bcc5}">
+      <Implementation>
+        <ST><![CDATA[]]></ST>
+      </Implementation>
+    </Action>
+    <LineIds Name="MAIN">
+      <LineId Id="4698" Count="19" />
+      <LineId Id="4696" Count="1" />
+      <LineId Id="743" Count="0" />
+      <LineId Id="4836" Count="0" />
+      <LineId Id="55" Count="10" />
+      <LineId Id="4173" Count="0" />
+      <LineId Id="2990" Count="0" />
+      <LineId Id="3382" Count="0" />
+      <LineId Id="3469" Count="3" />
+      <LineId Id="66" Count="5" />
+      <LineId Id="2991" Count="0" />
+      <LineId Id="662" Count="1" />
+      <LineId Id="661" Count="0" />
+      <LineId Id="666" Count="1" />
+      <LineId Id="669" Count="0" />
+      <LineId Id="2992" Count="0" />
+      <LineId Id="77" Count="0" />
+      <LineId Id="80" Count="3" />
+      <LineId Id="1321" Count="0" />
+      <LineId Id="4870" Count="0" />
+      <LineId Id="4869" Count="0" />
+      <LineId Id="4871" Count="2" />
+      <LineId Id="4915" Count="1" />
+      <LineId Id="4912" Count="0" />
+      <LineId Id="2993" Count="0" />
+      <LineId Id="4913" Count="0" />
+      <LineId Id="4917" Count="0" />
+      <LineId Id="4914" Count="0" />
+      <LineId Id="1211" Count="0" />
+      <LineId Id="1208" Count="0" />
+      <LineId Id="1247" Count="0" />
+      <LineId Id="2809" Count="0" />
+      <LineId Id="3171" Count="1" />
+      <LineId Id="2986" Count="0" />
+      <LineId Id="2813" Count="2" />
+      <LineId Id="4899" Count="3" />
+      <LineId Id="4898" Count="0" />
+      <LineId Id="2825" Count="0" />
+      <LineId Id="2827" Count="8" />
+      <LineId Id="4903" Count="0" />
+      <LineId Id="4905" Count="0" />
+      <LineId Id="4907" Count="0" />
+      <LineId Id="4909" Count="0" />
+      <LineId Id="4897" Count="0" />
+      <LineId Id="4896" Count="0" />
+      <LineId Id="2836" Count="8" />
+      <LineId Id="2846" Count="1" />
+      <LineId Id="4286" Count="1" />
+      <LineId Id="2849" Count="20" />
+      <LineId Id="4174" Count="0" />
+      <LineId Id="2870" Count="0" />
+      <LineId Id="3085" Count="0" />
+      <LineId Id="3279" Count="1" />
+      <LineId Id="3361" Count="1" />
+      <LineId Id="5606" Count="1" />
+      <LineId Id="3365" Count="0" />
+      <LineId Id="3364" Count="0" />
+      <LineId Id="3367" Count="0" />
+      <LineId Id="3380" Count="0" />
+      <LineId Id="3371" Count="0" />
+      <LineId Id="3473" Count="0" />
+      <LineId Id="3372" Count="0" />
+      <LineId Id="3474" Count="0" />
+      <LineId Id="3373" Count="0" />
+      <LineId Id="3475" Count="0" />
+      <LineId Id="3375" Count="0" />
+      <LineId Id="3479" Count="0" />
+      <LineId Id="3376" Count="0" />
+      <LineId Id="3480" Count="0" />
+      <LineId Id="3377" Count="0" />
+      <LineId Id="3481" Count="0" />
+      <LineId Id="3374" Count="0" />
+      <LineId Id="3482" Count="0" />
+      <LineId Id="3379" Count="0" />
+      <LineId Id="3468" Count="0" />
+      <LineId Id="3476" Count="2" />
+      <LineId Id="3569" Count="2" />
+      <LineId Id="3568" Count="0" />
+      <LineId Id="3368" Count="0" />
+      <LineId Id="3657" Count="0" />
+      <LineId Id="3663" Count="0" />
+      <LineId Id="4292" Count="0" />
+      <LineId Id="3798" Count="0" />
+      <LineId Id="4422" Count="0" />
+      <LineId Id="4970" Count="0" />
+      <LineId Id="4029" Count="0" />
+      <LineId Id="4973" Count="5" />
+      <LineId Id="4972" Count="0" />
+      <LineId Id="4058" Count="5" />
+      <LineId Id="4057" Count="0" />
+      <LineId Id="4030" Count="6" />
+      <LineId Id="4041" Count="5" />
+      <LineId Id="4040" Count="0" />
+      <LineId Id="4048" Count="5" />
+      <LineId Id="4047" Count="0" />
+      <LineId Id="4037" Count="0" />
+      <LineId Id="4054" Count="0" />
+      <LineId Id="4064" Count="0" />
+      <LineId Id="4980" Count="0" />
+      <LineId Id="4038" Count="0" />
+      <LineId Id="4055" Count="1" />
+      <LineId Id="4039" Count="0" />
+      <LineId Id="4028" Count="0" />
+      <LineId Id="5605" Count="0" />
+      <LineId Id="4541" Count="0" />
+      <LineId Id="5437" Count="6" />
+      <LineId Id="5509" Count="1" />
+      <LineId Id="5528" Count="0" />
+      <LineId Id="5512" Count="2" />
+      <LineId Id="5446" Count="7" />
+      <LineId Id="5518" Count="2" />
+      <LineId Id="5466" Count="7" />
+      <LineId Id="4579" Count="0" />
+      <LineId Id="4542" Count="0" />
+      <LineId Id="5508" Count="0" />
+      <LineId Id="5034" Count="0" />
+      <LineId Id="4890" Count="0" />
+      <LineId Id="5540" Count="0" />
+      <LineId Id="5156" Count="0" />
+      <LineId Id="5047" Count="2" />
+      <LineId Id="5131" Count="0" />
+      <LineId Id="5154" Count="0" />
+      <LineId Id="5436" Count="0" />
+      <LineId Id="5345" Count="0" />
+      <LineId Id="5142" Count="0" />
+      <LineId Id="5153" Count="0" />
+      <LineId Id="5150" Count="1" />
+      <LineId Id="5347" Count="2" />
+      <LineId Id="5346" Count="0" />
+      <LineId Id="5152" Count="0" />
+      <LineId Id="5160" Count="0" />
+      <LineId Id="5162" Count="0" />
+      <LineId Id="5210" Count="6" />
+      <LineId Id="5224" Count="23" />
+      <LineId Id="5249" Count="2" />
+      <LineId Id="5260" Count="5" />
+      <LineId Id="5259" Count="0" />
+      <LineId Id="5252" Count="0" />
+      <LineId Id="5266" Count="0" />
+      <LineId Id="5268" Count="0" />
+      <LineId Id="5267" Count="0" />
+      <LineId Id="5269" Count="0" />
+      <LineId Id="5037" Count="0" />
+      <LineId Id="4874" Count="0" />
+      <LineId Id="4979" Count="0" />
+      <LineId Id="4891" Count="0" />
+      <LineId Id="4875" Count="5" />
+      <LineId Id="540" Count="0" />
+      <LineId Id="542" Count="13" />
+      <LineId Id="670" Count="0" />
+      <LineId Id="672" Count="1" />
+      <LineId Id="556" Count="6" />
+      <LineId Id="674" Count="1" />
+      <LineId Id="563" Count="0" />
+      <LineId Id="685" Count="0" />
+      <LineId Id="564" Count="5" />
+      <LineId Id="676" Count="1" />
+      <LineId Id="570" Count="0" />
+      <LineId Id="684" Count="0" />
+      <LineId Id="571" Count="5" />
+      <LineId Id="678" Count="1" />
+      <LineId Id="577" Count="0" />
+      <LineId Id="683" Count="0" />
+      <LineId Id="578" Count="5" />
+      <LineId Id="680" Count="1" />
+      <LineId Id="584" Count="0" />
+      <LineId Id="1765" Count="1" />
+      <LineId Id="1768" Count="0" />
+      <LineId Id="1770" Count="1" />
+      <LineId Id="1773" Count="0" />
+      <LineId Id="1772" Count="0" />
+      <LineId Id="682" Count="0" />
+      <LineId Id="2335" Count="0" />
+      <LineId Id="2338" Count="3" />
+      <LineId Id="2337" Count="0" />
+      <LineId Id="2984" Count="0" />
+      <LineId Id="2336" Count="0" />
+      <LineId Id="2519" Count="3" />
+      <LineId Id="2517" Count="1" />
+      <LineId Id="585" Count="10" />
+    </LineIds>
+    <LineIds Name="MAIN.A_PrepCircMovements">
+      <LineId Id="1" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>
